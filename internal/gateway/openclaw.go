@@ -73,16 +73,17 @@ type authInfo struct {
 }
 
 type chatSendParams struct {
-	SessionKey     string           `json:"sessionKey"`
-	Message        string           `json:"message"`
-	IdempotencyKey string           `json:"idempotencyKey"`
-	Images         []chatImageParam `json:"images,omitempty"`
+	SessionKey     string                `json:"sessionKey"`
+	Message        string                `json:"message"`
+	IdempotencyKey string                `json:"idempotencyKey"`
+	Attachments    []chatAttachmentParam `json:"attachments,omitempty"`
 }
 
-// chatImageParam is a base64-encoded image attachment for chat.send.
-type chatImageParam struct {
-	MediaType string `json:"mediaType"` // e.g. "image/jpeg"
-	Data      string `json:"data"`      // base64-encoded image bytes
+// chatAttachmentParam is a base64-encoded attachment for chat.send.
+// Follows OpenClaw's attachment schema: mimeType + content (base64 string).
+type chatAttachmentParam struct {
+	MimeType string `json:"mimeType"` // e.g. "image/jpeg"
+	Content  string `json:"content"`  // base64-encoded bytes
 }
 
 // Version is the bridge version sent in the connect handshake.
@@ -420,15 +421,15 @@ func (oc *OpenClaw) SendAndReceive(ctx context.Context, req *Request) (string, e
 	}
 
 	// Encode image attachments as base64 for the gateway.
-	var images []chatImageParam
+	var attachments []chatAttachmentParam
 	for _, img := range req.Images {
-		images = append(images, chatImageParam{
-			MediaType: img.MimeType,
-			Data:      base64.StdEncoding.EncodeToString(img.Data),
+		attachments = append(attachments, chatAttachmentParam{
+			MimeType: img.MimeType,
+			Content:  base64.StdEncoding.EncodeToString(img.Data),
 		})
 	}
-	if len(images) > 0 {
-		log.Printf("openclaw: sending %d image(s) with message", len(images))
+	if len(attachments) > 0 {
+		log.Printf("openclaw: sending %d attachment(s) with message", len(attachments))
 	}
 
 	// Send message and wait for the gateway's acknowledgement.
@@ -436,7 +437,7 @@ func (oc *OpenClaw) SendAndReceive(ctx context.Context, req *Request) (string, e
 		SessionKey:     sessionKey,
 		Message:        taggedText,
 		IdempotencyKey: req.IdempotencyKey,
-		Images:         images,
+		Attachments:    attachments,
 	})
 	if err != nil {
 		return "", fmt.Errorf("chat.send: %w", err)
