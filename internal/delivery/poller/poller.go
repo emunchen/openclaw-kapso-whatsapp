@@ -88,16 +88,19 @@ func (p *Poller) poll(lastPoll *time.Time, out chan<- delivery.Event) {
 			continue
 		}
 
+		images := delivery.ExtractImages(msg.Message, p.Client)
+
 		name := ""
 		if msg.Kapso != nil {
 			name = msg.Kapso.ContactName
 		}
 
 		out <- delivery.Event{
-			ID:   msg.ID,
-			From: msg.From,
-			Name: name,
-			Text: text,
+			ID:     msg.ID,
+			From:   msg.From,
+			Name:   name,
+			Text:   text,
+			Images: images,
 		}
 		forwarded++
 	}

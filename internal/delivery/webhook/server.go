@@ -226,6 +226,8 @@ func (s *Server) emitMessage(msg kapso.Message, contacts map[string]string, out 
 		return
 	}
 
+	images := delivery.ExtractImages(msg, s.Client)
+
 	name := ""
 	if msg.Kapso != nil && msg.Kapso.ContactName != "" {
 		name = msg.Kapso.ContactName
@@ -234,10 +236,11 @@ func (s *Server) emitMessage(msg kapso.Message, contacts map[string]string, out 
 	}
 
 	out <- delivery.Event{
-		ID:   msg.ID,
-		From: msg.From,
-		Name: name,
-		Text: text,
+		ID:     msg.ID,
+		From:   msg.From,
+		Name:   name,
+		Text:   text,
+		Images: images,
 	}
 	log.Printf("webhook: received message %s from %s", msg.ID, msg.From)
 }

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -72,9 +73,16 @@ type authInfo struct {
 }
 
 type chatSendParams struct {
-	SessionKey     string `json:"sessionKey"`
-	Message        string `json:"message"`
-	IdempotencyKey string `json:"idempotencyKey"`
+	SessionKey     string           `json:"sessionKey"`
+	Message        string           `json:"message"`
+	IdempotencyKey string           `json:"idempotencyKey"`
+	Images         []chatImageParam `json:"images,omitempty"`
+}
+
+// chatImageParam is a base64-encoded image attachment for chat.send.
+type chatImageParam struct {
+	MediaType string `json:"mediaType"` // e.g. "image/jpeg"
+	Data      string `json:"data"`      // base64-encoded image bytes
 }
 
 // Version is the bridge version sent in the connect handshake.
@@ -411,11 +419,24 @@ func (oc *OpenClaw) SendAndReceive(ctx context.Context, req *Request) (string, e
 		sessionKey = oc.sessionKey
 	}
 
+	// Encode image attachments as base64 for the gateway.
+	var images []chatImageParam
+	for _, img := range req.Images {
+		images = append(images, chatImageParam{
+			MediaType: img.MimeType,
+			Data:      base64.StdEncoding.EncodeToString(img.Data),
+		})
+	}
+	if len(images) > 0 {
+		log.Printf("openclaw: sending %d image(s) with message", len(images))
+	}
+
 	// Send message and wait for the gateway's acknowledgement.
 	resp, err := oc.sendRequest(ctx, "chat.send", chatSendParams{
 		SessionKey:     sessionKey,
 		Message:        taggedText,
 		IdempotencyKey: req.IdempotencyKey,
+		Images:         images,
 	})
 	if err != nil {
 		return "", fmt.Errorf("chat.send: %w", err)

@@ -131,6 +131,40 @@ func formatLocationMessage(loc *kapso.LocationContent) string {
 	return strings.Join(parts, " ")
 }
 
+// maxImageSize is the default maximum image download size (10 MB).
+const maxImageSize int64 = 10 * 1024 * 1024
+
+// ExtractImages downloads image data from an image message. Returns nil for
+// non-image messages or when the download fails (the text fallback in
+// ExtractText still provides context). The client is required for
+// authenticated media downloads from Kapso.
+func ExtractImages(msg kapso.Message, client *kapso.Client) []ImageAttachment {
+	if msg.Type != "image" || msg.Image == nil || client == nil {
+		return nil
+	}
+
+	mediaURL := kapsoMediaURL(msg.Kapso)
+	if mediaURL == "" {
+		return nil
+	}
+
+	data, err := client.DownloadMedia(mediaURL, maxImageSize)
+	if err != nil {
+		log.Printf("WARN: image download failed for message %s: %v", msg.ID, err)
+		return nil
+	}
+
+	mimeType := msg.Image.MimeType
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+
+	return []ImageAttachment{{
+		Data:     data,
+		MimeType: mimeType,
+	}}
+}
+
 // notifyUnsupported sends a WhatsApp reply informing the user that their
 // message type is not yet supported.
 func notifyUnsupported(from, msgType string, client *kapso.Client) {

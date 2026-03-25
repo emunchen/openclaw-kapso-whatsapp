@@ -286,6 +286,15 @@ func handleMessage(ctx context.Context, gw gateway.Gateway, client *kapso.Client
 	msgCtx, msgCancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer msgCancel()
 
+	// Convert delivery images to gateway format.
+	var images []gateway.ImageAttachment
+	for _, img := range evt.Images {
+		images = append(images, gateway.ImageAttachment{
+			Data:     img.Data,
+			MimeType: img.MimeType,
+		})
+	}
+
 	reply, err := gw.SendAndReceive(msgCtx, &gateway.Request{
 		SessionKey:     sessionKey,
 		IdempotencyKey: evt.ID,
@@ -293,6 +302,7 @@ func handleMessage(ctx context.Context, gw gateway.Gateway, client *kapso.Client
 		FromName:       evt.Name,
 		Role:           role,
 		Text:           evt.Text,
+		Images:         images,
 	})
 
 	typingCancel()
