@@ -90,12 +90,19 @@ func ExtractText(msg kapso.Message, client *kapso.Client, tr transcribe.Transcri
 	}
 }
 
-// kapsoMediaURL returns the media URL from KapsoMeta, or "" if unavailable.
+// kapsoMediaURL returns the media URL from KapsoMeta, falling back to
+// MediaData.URL if the top-level MediaURL is empty.
 func kapsoMediaURL(k *kapso.KapsoMeta) string {
 	if k == nil {
 		return ""
 	}
-	return k.MediaURL
+	if k.MediaURL != "" {
+		return k.MediaURL
+	}
+	if k.MediaData != nil && k.MediaData.URL != "" {
+		return k.MediaData.URL
+	}
+	return ""
 }
 
 // formatMediaMessage builds a text representation for a media attachment.
@@ -145,6 +152,7 @@ func ExtractImages(msg kapso.Message, client *kapso.Client) []ImageAttachment {
 
 	mediaURL := kapsoMediaURL(msg.Kapso)
 	if mediaURL == "" {
+		log.Printf("WARN: image message %s has no media URL (kapso==nil:%v)", msg.ID, msg.Kapso == nil)
 		return nil
 	}
 
@@ -153,6 +161,8 @@ func ExtractImages(msg kapso.Message, client *kapso.Client) []ImageAttachment {
 		log.Printf("WARN: image download failed for message %s: %v", msg.ID, err)
 		return nil
 	}
+
+	log.Printf("downloaded image for message %s (%d bytes, %s)", msg.ID, len(data), msg.Image.MimeType)
 
 	mimeType := msg.Image.MimeType
 	if mimeType == "" {
