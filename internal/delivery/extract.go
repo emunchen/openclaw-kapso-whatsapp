@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/kapso"
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/transcribe"
@@ -41,6 +44,24 @@ func ExtractText(msg kapso.Message, client *kapso.Client, tr transcribe.Transcri
 		if label == "" {
 			label = msg.Document.Caption
 		}
+
+		// Try PDF text extraction.
+		if client != nil && isPDF(msg.Document.MimeType) {
+			if mediaURL := kapsoMediaURL(msg.Kapso); mediaURL != "" {
+				if text, err := extractPDFText(mediaURL, client); err == nil {
+					prefix := "[document]"
+					if label != "" {
+						prefix += " " + label
+					}
+					log.Printf("extracted PDF text for message %s (%d chars)", msg.ID, len(text))
+					return prefix + "\n" + text, true
+				} else {
+					log.Printf("WARN: PDF text extraction failed for message %s: %v", msg.ID, err)
+				}
+			}
+		}
+
+		// Fallback for non-PDF or extraction failure.
 		return formatMediaMessage("document", label, msg.Document.MimeType, msg.Kapso), true
 
 	case "audio":
@@ -136,6 +157,56 @@ func formatLocationMessage(loc *kapso.LocationContent) string {
 	}
 	parts = append(parts, fmt.Sprintf("(%.6f, %.6f)", loc.Latitude, loc.Longitude))
 	return strings.Join(parts, " ")
+}
+
+// maxDocumentSize is the maximum document download size (20 MB).
+const maxDocumentSize int64 = 20 * 1024 * 1024
+
+// isPDF returns true if the MIME type indicates a PDF document.
+func isPDF(mimeType string) bool {
+	return strings.Contains(strings.ToLower(mimeType), "pdf")
+}
+
+// extractPDFText downloads a PDF from mediaURL and extracts text using pdftotext.
+func extractPDFText(mediaURL string, client *kapso.Client) (string, error) {
+	data, err := client.DownloadMedia(mediaURL, maxDocumentSize)
+	if err != nil {
+		return "", fmt.Errorf("download: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "kapso-pdf-*.pdf")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "pdftotext", "-layout", tmpPath, "-").Output()
+	if err != nil {
+		return "", fmt.Errorf("pdftotext: %w", err)
+	}
+
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return "", fmt.Errorf("pdftotext produced empty output (scanned PDF?)")
+	}
+
+	// Truncate very large extractions to avoid flooding the gateway.
+	const maxTextLen = 50000
+	if len(text) > maxTextLen {
+		text = text[:maxTextLen] + "\n[... texto truncado]"
+	}
+
+	return text, nil
 }
 
 // maxImageSize is the default maximum image download size (10 MB).
