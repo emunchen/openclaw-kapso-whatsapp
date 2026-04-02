@@ -19,6 +19,7 @@ import (
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/delivery/webhook"
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/gateway"
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/kapso"
+	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/routing"
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/security"
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/tailscale"
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/transcribe"
@@ -136,6 +137,16 @@ func main() {
 		cfg.Security.Mode, cfg.Security.SessionIsolation,
 		cfg.Security.RateLimit, cfg.Security.RateWindow)
 
+	// Multi-agent router (maps phone → isolated OpenClaw agent).
+	router := routing.New(routing.Config{
+		RegistryPath: cfg.Routing.Registry,
+		AgentsBase:   cfg.Routing.AgentsBase,
+		DefaultAgent: cfg.Routing.DefaultAgent,
+	})
+	if cfg.Routing.Registry != "" {
+		log.Printf("routing: registry=%s, default_agent=%s", cfg.Routing.Registry, cfg.Routing.DefaultAgent)
+	}
+
 	// Command dispatcher (no-op when no commands are configured).
 	dispatcher := commands.New(cfg.Commands)
 	if cfg.Commands.Prefix != "" && len(cfg.Commands.Definitions) > 0 {
@@ -161,7 +172,15 @@ func main() {
 			}
 
 			role := guard.Role(evt.From)
-			sessionKey := guard.SessionKey(cfg.Gateway.SessionKey, evt.From)
+
+			// Multi-agent routing: resolve phone → agent-specific session key and paths.
+			var sessionKey, sessionsJSON string
+			if cfg.Routing.Registry != "" {
+				sessionKey = router.SessionKeyFor(evt.From)
+				sessionsJSON = router.SessionsJSONFor(evt.From)
+			} else {
+				sessionKey = guard.SessionKey(cfg.Gateway.SessionKey, evt.From)
+			}
 
 			// Bridge commands are intercepted before the gateway.
 			if dispatcher.IsCommand(evt.Text) {
@@ -170,7 +189,7 @@ func main() {
 			}
 
 			// Forward to gateway and wait for agent reply in a goroutine.
-			go handleMessage(ctx, gw, client, evt, sessionKey, role, cfg.Gateway.ErrorMessage)
+			go handleMessage(ctx, gw, client, evt, sessionKey, sessionsJSON, role, cfg.Gateway.ErrorMessage)
 		}
 	}()
 
@@ -252,7 +271,7 @@ func handleCommand(ctx context.Context, d *commands.Dispatcher, gw gateway.Gatew
 
 // handleMessage sends a message to the gateway, waits for the agent's reply,
 // and sends it back to the WhatsApp sender.
-func handleMessage(ctx context.Context, gw gateway.Gateway, client *kapso.Client, evt delivery.Event, sessionKey, role, errorMessage string) {
+func handleMessage(ctx context.Context, gw gateway.Gateway, client *kapso.Client, evt delivery.Event, sessionKey, sessionsJSON, role, errorMessage string) {
 	from := evt.From
 	if !strings.HasPrefix(from, "+") {
 		from = "+" + from
@@ -297,6 +316,7 @@ func handleMessage(ctx context.Context, gw gateway.Gateway, client *kapso.Client
 
 	reply, err := gw.SendAndReceive(msgCtx, &gateway.Request{
 		SessionKey:     sessionKey,
+		SessionsJSON:   sessionsJSON,
 		IdempotencyKey: evt.ID,
 		From:           evt.From,
 		FromName:       evt.Name,

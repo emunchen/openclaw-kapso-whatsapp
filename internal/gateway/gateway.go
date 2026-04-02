@@ -30,6 +30,7 @@ type ImageAttachment struct {
 // route a message. Each implementation picks the fields it cares about.
 type Request struct {
 	SessionKey     string            // agent session to target
+	SessionsJSON   string            // per-request sessions.json path (multi-agent routing)
 	IdempotencyKey string            // dedup key (typically the WhatsApp message ID)
 	From           string            // sender phone number (E.164)
 	FromName       string            // sender display name

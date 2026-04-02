@@ -20,6 +20,16 @@ type Config struct {
 	Security   SecurityConfig   `toml:"security"`
 	Transcribe TranscribeConfig `toml:"transcribe"`
 	Commands   CommandsConfig   `toml:"commands"`
+	Routing    RoutingConfig    `toml:"routing"`
+}
+
+// RoutingConfig maps phone numbers to isolated OpenClaw agents.
+// When enabled, each registered user gets their own agent with a
+// separate workspace, sessions, and memory.
+type RoutingConfig struct {
+	Registry     string `toml:"registry"`      // path to user registry JSON
+	AgentsBase   string `toml:"agents_base"`   // base dir for agent dirs (e.g. ~/.openclaw/agents)
+	DefaultAgent string `toml:"default_agent"` // fallback agent for unknown phones
 }
 
 // CommandsConfig holds configuration for the bridge-level command system.
@@ -122,6 +132,10 @@ func defaults() Config {
 			RateWindow:       60,
 			SessionIsolation: true,
 			DefaultRole:      "member",
+		},
+		Routing: RoutingConfig{
+			AgentsBase:   filepath.Join(home, ".openclaw", "agents"),
+			DefaultAgent: "main",
 		},
 		Transcribe: TranscribeConfig{
 			MaxAudioSize:      25 * 1024 * 1024, // 25MB

@@ -447,13 +447,18 @@ func (oc *OpenClaw) SendAndReceive(ctx context.Context, req *Request) (string, e
 	}
 
 	// Poll session JSONL for the agent's reply.
-	return oc.pollReply(ctx, sessionKey)
+	// Use per-request sessions.json if provided (multi-agent routing).
+	sessionsJSON := req.SessionsJSON
+	if sessionsJSON == "" {
+		sessionsJSON = oc.sessionsJSON
+	}
+	return oc.pollReply(ctx, sessionKey, sessionsJSON)
 }
 
 // pollReply polls the session JSONL file until an unclaimed assistant reply
 // appears. When session isolation produces a per-sender key that doesn't
 // exist in sessions.json, it falls back to the base session key.
-func (oc *OpenClaw) pollReply(ctx context.Context, sessionKey string) (string, error) {
+func (oc *OpenClaw) pollReply(ctx context.Context, sessionKey string, sessionsJSON string) (string, error) {
 	since := time.Now().UTC()
 	deadline := time.Now().Add(10 * time.Minute)
 	ticker := time.NewTicker(3 * time.Second)
@@ -473,11 +478,12 @@ func (oc *OpenClaw) pollReply(ctx context.Context, sessionKey string) (string, e
 		case <-ticker.C:
 		}
 
-		sessionFile, err := getSessionFile(oc.sessionsJSON, sessionKey)
+		sessionFile, err := getSessionFile(sessionsJSON, sessionKey)
 		if err != nil && useFallback {
+			// Try the default agent's sessions.json as fallback.
 			sessionFile, err = getSessionFile(oc.sessionsJSON, oc.sessionKey)
 			if err == nil && !loggedFallback {
-				log.Printf("openclaw: per-sender session %q not found, using base session %q", sessionKey, oc.sessionKey)
+				log.Printf("openclaw: per-agent session %q not found in %s, using base session %q", sessionKey, sessionsJSON, oc.sessionKey)
 				loggedFallback = true
 			}
 		}
