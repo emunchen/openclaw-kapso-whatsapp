@@ -132,6 +132,52 @@ func (c *Client) markRead(messageID string, typing *TypingIndicator) error {
 	return nil
 }
 
+// GetMediaURL resolves the download URL for a WhatsApp media ID by calling
+// the standard media endpoint through Kapso's API proxy.
+// This is used as a fallback when the polling API returns a message before
+// Kapso has finished processing the media (kapso.media_url is empty).
+func (c *Client) GetMediaURL(mediaID string) (string, error) {
+	if mediaID == "" {
+		return "", fmt.Errorf("empty media ID")
+	}
+
+	u := fmt.Sprintf("%s/%s", c.getBaseURL(), mediaID)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("X-API-Key", c.APIKey)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get media URL: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("media URL lookup error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parse media response: %w", err)
+	}
+
+	if result.URL == "" {
+		return "", fmt.Errorf("media response has no URL")
+	}
+
+	return result.URL, nil
+}
+
 // DownloadMedia downloads raw audio bytes from the given URL, enforcing a
 // maximum response size. The maxBytes limit is applied via io.LimitReader with
 // a +1 sentinel: if the server sends more than maxBytes, an error is returned.

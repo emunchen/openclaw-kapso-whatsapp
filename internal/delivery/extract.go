@@ -47,7 +47,7 @@ func ExtractText(msg kapso.Message, client *kapso.Client, tr transcribe.Transcri
 
 		// Try PDF text extraction.
 		if client != nil && isPDF(msg.Document.MimeType) {
-			if mediaURL := kapsoMediaURL(msg.Kapso); mediaURL != "" {
+			if mediaURL := resolveMediaURL(msg.Kapso, msg.Document.ID, client, msg.ID); mediaURL != "" {
 				if text, err := extractPDFText(mediaURL, client); err == nil {
 					prefix := "[document]"
 					if label != "" {
@@ -74,7 +74,7 @@ func ExtractText(msg kapso.Message, client *kapso.Client, tr transcribe.Transcri
 		}
 		// 2. Local transcription via configured transcriber.
 		if tr != nil {
-			mediaURL := kapsoMediaURL(msg.Kapso)
+			mediaURL := resolveMediaURL(msg.Kapso, msg.Audio.ID, client, msg.ID)
 			if mediaURL != "" {
 				if audio, err := client.DownloadMedia(mediaURL, maxAudioSize); err == nil {
 					if text, err := tr.Transcribe(context.Background(), audio, msg.Audio.MimeType); err == nil {
@@ -85,8 +85,6 @@ func ExtractText(msg kapso.Message, client *kapso.Client, tr transcribe.Transcri
 				} else {
 					log.Printf("WARN: audio download failed for message %s: %v", msg.ID, err)
 				}
-			} else {
-				log.Printf("WARN: no media URL available for audio message %s", msg.ID)
 			}
 		}
 		// 3. Fallback.
@@ -221,9 +219,8 @@ func ExtractImages(msg kapso.Message, client *kapso.Client) []ImageAttachment {
 		return nil
 	}
 
-	mediaURL := kapsoMediaURL(msg.Kapso)
+	mediaURL := resolveMediaURL(msg.Kapso, msg.Image.ID, client, msg.ID)
 	if mediaURL == "" {
-		log.Printf("WARN: image message %s has no media URL (kapso==nil:%v)", msg.ID, msg.Kapso == nil)
 		return nil
 	}
 
@@ -244,6 +241,31 @@ func ExtractImages(msg kapso.Message, client *kapso.Client) []ImageAttachment {
 		Data:     data,
 		MimeType: mimeType,
 	}}
+}
+
+// resolveMediaURL returns a download URL for a media message. It first checks
+// the Kapso enrichment metadata, then falls back to resolving the URL via the
+// WhatsApp media ID endpoint. This handles the race condition where Kapso's
+// polling API returns a message before media processing is complete.
+func resolveMediaURL(k *kapso.KapsoMeta, mediaID string, client *kapso.Client, msgID string) string {
+	if url := kapsoMediaURL(k); url != "" {
+		return url
+	}
+
+	// Fallback: resolve via WhatsApp media ID.
+	if mediaID != "" && client != nil {
+		url, err := client.GetMediaURL(mediaID)
+		if err != nil {
+			log.Printf("WARN: media URL resolution failed for message %s (mediaID=%s): %v", msgID, mediaID, err)
+		} else {
+			log.Printf("resolved media URL via media ID for message %s", msgID)
+			return url
+		}
+	} else {
+		log.Printf("WARN: message %s has no media URL and no media ID for fallback (kapso==nil:%v)", msgID, k == nil)
+	}
+
+	return ""
 }
 
 // notifyUnsupported sends a WhatsApp reply informing the user that their
