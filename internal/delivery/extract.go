@@ -268,6 +268,22 @@ func resolveMediaURL(k *kapso.KapsoMeta, mediaID string, client *kapso.Client, m
 	return ""
 }
 
+// IsMediaMessage returns true if the message is a type that carries media
+// (image, document, audio, video).
+func IsMediaMessage(msg kapso.Message) bool {
+	switch msg.Type {
+	case "image", "document", "audio", "video":
+		return true
+	}
+	return false
+}
+
+// HasMediaURL returns true if the message has a resolvable media download URL
+// from Kapso's enrichment metadata.
+func HasMediaURL(msg kapso.Message) bool {
+	return kapsoMediaURL(msg.Kapso) != ""
+}
+
 // notifyUnsupported sends a WhatsApp reply informing the user that their
 // message type is not yet supported.
 func notifyUnsupported(from, msgType string, client *kapso.Client) {

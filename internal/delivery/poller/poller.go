@@ -14,6 +14,10 @@ import (
 	"github.com/Enriquefft/openclaw-kapso-whatsapp/internal/transcribe"
 )
 
+// maxMediaRetries is the number of poll cycles to wait for a media URL before
+// giving up and forwarding the message as text-only.
+const maxMediaRetries = 6 // ~60s at 10s poll interval
+
 // Poller implements delivery.Source by polling the Kapso list-messages API.
 type Poller struct {
 	Client       *kapso.Client
@@ -22,6 +26,8 @@ type Poller struct {
 	StateFile    string
 	Transcriber  transcribe.Transcriber // nil = transcription disabled
 	MaxAudioSize int64
+
+	pendingMedia map[string]int // msgID → retry count for media messages without URL
 }
 
 // Run polls the Kapso API on a ticker and emits events for each new inbound
@@ -55,6 +61,10 @@ func (p *Poller) Run(ctx context.Context, out chan<- delivery.Event) error {
 }
 
 func (p *Poller) poll(lastPoll *time.Time, out chan<- delivery.Event) {
+	if p.pendingMedia == nil {
+		p.pendingMedia = make(map[string]int)
+	}
+
 	since := lastPoll.Format(time.RFC3339)
 
 	resp, err := p.Client.ListMessages(kapso.ListMessagesParams{
@@ -73,12 +83,36 @@ func (p *Poller) poll(lastPoll *time.Time, out chan<- delivery.Event) {
 
 	var newest time.Time
 	forwarded := 0
+	deferred := 0
 
 	for _, msg := range resp.Data {
-		// Track timestamp for ALL messages so the cursor advances past
-		// unsupported types (stickers, contacts, etc.) and they are not
-		// re-fetched on the next poll cycle.
 		msgTime := parseTimestamp(msg.Timestamp)
+
+		// Media messages without a URL: defer processing so the next poll
+		// cycle can pick them up once Kapso finishes media processing.
+		if delivery.IsMediaMessage(msg.Message) && !delivery.HasMediaURL(msg.Message) {
+			retries := p.pendingMedia[msg.ID]
+			if retries < maxMediaRetries {
+				p.pendingMedia[msg.ID] = retries + 1
+				if retries == 0 {
+					log.Printf("media message %s has no URL yet, deferring (attempt %d/%d)", msg.ID, retries+1, maxMediaRetries)
+				}
+				deferred++
+				// Don't advance cursor and don't emit — will retry next cycle.
+				continue
+			}
+			// Max retries exhausted: forward as text-only and clean up.
+			log.Printf("WARN: media message %s still has no URL after %d retries, forwarding as text-only", msg.ID, maxMediaRetries)
+			delete(p.pendingMedia, msg.ID)
+		} else {
+			// Message now has URL (or is not media). Clean up pending tracker.
+			if _, pending := p.pendingMedia[msg.ID]; pending {
+				log.Printf("media message %s now has URL (after %d retries)", msg.ID, p.pendingMedia[msg.ID])
+				delete(p.pendingMedia, msg.ID)
+			}
+		}
+
+		// Advance cursor past this message.
 		if !msgTime.IsZero() && msgTime.After(newest) {
 			newest = msgTime
 		}
@@ -107,6 +141,9 @@ func (p *Poller) poll(lastPoll *time.Time, out chan<- delivery.Event) {
 
 	if forwarded > 0 {
 		log.Printf("forwarded %d message(s)", forwarded)
+	}
+	if deferred > 0 {
+		log.Printf("deferred %d media message(s) waiting for URL", deferred)
 	}
 
 	if !newest.IsZero() {
