@@ -128,7 +128,12 @@ func (r *Router) IsRegistered(phone string) bool {
 	return ok
 }
 
-// normalize strips all non-digit characters from a phone number.
+// normalize strips non-digits and canonicalizes Argentinian mobile numbers.
+//
+// Meta's WhatsApp Cloud API drops the leading "9" from Argentinian mobile
+// numbers in webhook `from` fields (e.g. "5492615562747" → "542615562747"),
+// while user-facing formats and wamid payloads keep it. To make both forms
+// match the same registry entry, we re-insert the "9" when missing.
 func normalize(phone string) string {
 	var b strings.Builder
 	for _, r := range phone {
@@ -136,5 +141,9 @@ func normalize(phone string) string {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	digits := b.String()
+	if strings.HasPrefix(digits, "54") && !strings.HasPrefix(digits, "549") && len(digits) >= 12 {
+		digits = "549" + digits[2:]
+	}
+	return digits
 }
